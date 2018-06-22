@@ -11,6 +11,7 @@ http://www.slate.com/articles/sports/sports_nut/2013/08/the_numbers_game_why_soc
 
 """
 import csv
+import copy
 import random
 import math
 from collections import OrderedDict
@@ -37,6 +38,7 @@ class WorldCupper(object):
                 row['games_lost'] = 0
                 row['games_tied'] = 0
                 row['points'] = 0
+                row['name'] = row['name'].capitalize()
                 self.groups.setdefault(row['group'], []).append(row)
 
         self.total_group_goals = 0
@@ -46,11 +48,11 @@ class WorldCupper(object):
     def run_group_stage(self):
         # Run group stage
 
-        groups = OrderedDict(sorted(self.groups.items()))
-        for group_name, group_teams in groups.items():
+        self.groups = OrderedDict(sorted(self.groups.items()))
+        for group_name, group_teams in self.groups.items():
             for i, team1 in enumerate(group_teams):
                 for team2 in group_teams[i+1:]:
-                    team1_score, team2_score, total_goals = self.run_match(team1, team2)
+                    team1_score, team2_score, total_goals, _ = self.run_match(team1, team2)
                     self.games += 1
                     self.total_group_goals += total_goals
                     team1['goals_for'] += team1_score
@@ -72,15 +74,16 @@ class WorldCupper(object):
                         team2['games_won'] += 1
                         team1['games_lost'] += 1
                         team2['points'] += 3
-                    # print('score', team1_score, team2_score, 'total goals', total_goals)
-                    print(team1['name'].capitalize(), ' ', team1_score, ' vs ', team2['name'].capitalize(), ' ',
+                    
+                    print(team1['name'], ' ', team1_score, ' vs ', team2['name'], ' ',
                           team2_score)
 
         # Summary of groups
         print('total goals in ', self.games, ' games ', self.total_group_goals)
         print('goals per game ', self.total_group_goals/self.games)
 
-        for group_name, group_teams in groups.items():
+        for group_name, group_teams in self.groups.items():
+            print('Group {}'.format(group_name))
             print('team, points, games won, games lost, games tied, goals for, goals against, goal diff')
             # group_teams = sorted(group_teams, key=lambda k: k['points'], reverse=True)
             # Sort groups by points,
@@ -91,19 +94,73 @@ class WorldCupper(object):
                       team['goals_for'], team['goals_against'], team['goals_diff'])
             print('')
 
-        # TODO
-        # print(groups['a'][0])
-        # print(groups['b'][1])
-        # print(self.run_match(groups['a'][0], groups['b'][1])) # team1_score, team2_score, total_goals
-        # run_playoffs, right vs left side winnters
-        # Team 1 vs team 2, team 3 vs team 4, team 5 vs team 6, team 7 vs team 8
-        # winner team1,2, winner of team3,4, winner of team5,6, winner of team7,8
-        # winner of team 1,2,34, winner of team 5,6,7,8
-        # winner
-        left_side_teams = groups['a'][0], groups['b'][1], groups['c'][0], groups['d'][1], groups['e'][0],\
-                          groups['f'][1], groups['g'][0], groups['h'][1]
-        right_side_teams = groups['b'][0], groups['a'][1], groups['d'][0], groups['c'][1], groups['f'][0],\
-                          groups['e'][1], groups['h'][0], groups['g'][1]
+    def run_round(self, current_round_matches):
+        current_round_matches = copy.deepcopy(current_round_matches)
+        next_round_matches = []
+        next_match = []
+        round_total_goals = 0
+        for i, match_teams in enumerate(current_round_matches):
+            team1_score, team2_score, total_goals, winning_team = self.run_match(match_teams[0], match_teams[1],
+                                                                                 do_penalties=True)
+            # Save scores in original dict
+            match_teams[0]['score'] = team1_score
+            match_teams[1]['score'] = team2_score
+
+            round_total_goals += total_goals
+            # print(match_teams[0]['name'], match_teams[0]['score'], match_teams[1]['name'], match_teams[1]['score'])
+
+            # winning_team['score'] = None
+            next_match.append(winning_team)
+            if i % 2:
+                next_round_matches.append(next_match)
+                next_match = []
+
+        # Single winner edge case for round of 2 teams (final)
+        final_winner = None
+        if not next_round_matches:
+            final_winner = next_match[0]
+
+        return next_round_matches, current_round_matches, final_winner, round_total_goals
+
+    def run_knockout_stage(self):
+        groups = self.groups
+        # Final 16 teams
+        final_16_matches = [
+            [groups['a'][0], groups['b'][1]], [groups['c'][0], groups['d'][1]],
+            [groups['e'][0], groups['f'][1]], [groups['g'][0], groups['h'][1]],
+            [groups['b'][0], groups['a'][1]], [groups['d'][0], groups['c'][1]],
+            [groups['f'][0], groups['e'][1]], [groups['h'][0], groups['g'][1]]
+        ]
+
+        # Final 16
+        # print('')
+        # print("Final 16")
+        quarter_final_matches, final_16_matches, _, total_goals = self.run_round(final_16_matches)
+        self.total_knockout_goals += total_goals
+
+        # Semi finals
+        # print('')
+        # print("Semi Finals")
+        semi_final_matches, quarter_final_matches, _, total_goals = self.run_round(quarter_final_matches)
+        self.total_knockout_goals += total_goals
+
+        # Quarter finals
+        # print('')
+        # print("Quarter Finals")
+        final_match, semi_final_matches, _, total_goals = self.run_round(semi_final_matches)
+        self.total_knockout_goals += total_goals
+
+        # Final
+        # print('')
+        # print("Final")
+        _, final_match, winner, total_goals = self.run_round(final_match)
+        self.total_knockout_goals += total_goals
+
+        # Winner
+        # print('')
+        # print("WC Winner: {}".format(winner['name']))
+
+        self.draw_knockout_table(final_16_matches, quarter_final_matches, semi_final_matches, final_match, winner)
 
     def attack(self, team_attack, team_overall, number_of_attacks, other_team_defense):
         """
@@ -180,7 +237,7 @@ class WorldCupper(object):
         team2_relative_rating = 1.0 - team2_relative_rating
         # print('relative!!', team1_relative_rating, team2_relative_rating)
 
-        # TODO: Do we need this?
+        # TODO: Man not need random factor
         # team1_random_factor = float(team1['overall']) / 100.0 * random.random() + \
         #                       (float(team1['boost']) / 100.0)
         # team2_random_factor = float(team2['overall']) / 100.0 * random.random() + \
@@ -196,8 +253,6 @@ class WorldCupper(object):
         team2_defense = float(team2['def']) / 100.0
         team1_overall = float(team1['overall']) / 100.0
         team2_overall = float(team2['overall']) / 100.0
-        # print(team1['name'], team1_attack, team1_midfield, team1_defense, team1_overall, team2['name'], team2_attack, team2_midfield, team2_defense,
-        #       team2_overall)
 
         # How much better is team 1 vs team 2?
         attack_diff_factor = math.fabs(team2_attack - team1_attack) * 2
@@ -246,18 +301,6 @@ class WorldCupper(object):
             # print('team2 better', team2['name'], team2_extra_attacks)
             team2_score += self.attack(team2_attack, team2_overall, team2_extra_attacks, team1_defense)
 
-        # print(team1['name'], team1_score, team2['name'], team2_score)
-        # # Normalize goals
-        # total_goals = max(AVERAGE_GOALS_PER_GAME * random.uniform(0, 3) + (
-        #             (team1_attack + team2_attack - team2_defense - team1_defense) * 10) - 2, 0)
-        # total_goals = int(round(total_goals, 0))
-        # if team1_score:
-        #     team1_score = int(team1_score / (team1_score + team2_score) * total_goals)
-        # if team2_score:
-        #     team2_score = int(team2_score / (team1_score + team2_score) * total_goals)
-        # print('hello')
-        # print(team1_score, team2_score, team1_attack, team2_attack, team1_defense, team2_defense)
-        # print('done'); input()
         team1_score, team2_score, total_goals = self.normalize_goals(team1_score, team2_score, team1_attack,
                                                                      team2_attack, team1_defense, team2_defense)
         # Penalties if applicable
@@ -274,10 +317,62 @@ class WorldCupper(object):
             else:
                 team2_score += 1
 
-        return team1_score, team2_score, total_goals
+        winning_team = None
+        if team1_score > team2_score:
+            winning_team = team1
+        elif team2_score > team1_score:
+            winning_team = team2
+
+        # TODO: Return penalties scored if applicable
+        return team1_score, team2_score, total_goals, winning_team
+
+    def draw_knockout_table(self, final_16_matches, quarter_final_matches, semi_final_matches, final_match, winner):
+        args = []
+        for match in final_16_matches + quarter_final_matches + semi_final_matches + final_match:
+            args.append(match[0]['name'] + ' ' + str(match[0]['score']))
+            args.append(match[1]['name'] + ' ' + str(match[1]['score']))
+
+        args.append(winner['name'])
+
+        table = ("\n"
+                 "Left:\n"
+                 "{0}\n"
+                 "{1}\n"
+                 "      {16}\n"
+                 "      {17}\n"
+                 "{2}\n"
+                 "          {24}\n"
+                 "{3}\n"
+                 "                  {28}\n"
+                 "{4}\n"
+                 "{5}\n"
+                 "          {25}\n"
+                 "      {18}\n"
+                 "      {19}\n"
+                 "{6}\n"
+                 "{7}\n"
+                 "                           {30}\n"
+                 "Right:\n"
+                 "{8}\n"
+                 "{9}\n"
+                 "      {20}\n"
+                 "      {21}\n"
+                 "{10}\n"
+                 "          {26}\n"
+                 "{11}\n"
+                 "                  {29}\n"
+                 "{12}\n"
+                 "{13}\n"
+                 "          {27}\n"
+                 "      {22}\n"
+                 "      {23}\n"
+                 "{14}\n"
+                 "{15}\n").format(*args)
+
+        print(table)
 
 
 if __name__ == "__main__":
     wc = WorldCupper()
     wc.run_group_stage()
-    # print(wc.normalize_goals(7, 8, 0.86, 0.84, 0.85, 0.81, 2))
+    wc.run_knockout_stage()
